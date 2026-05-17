@@ -1,5 +1,5 @@
 ---
-title: "Group 62 Stats 20 Project"
+title: "NYC Restraunt Insepection "
 author: " Prisha Chowdhury 806755809"
 date: "2025-11-25"
 output: html_document
