@@ -1,6 +1,6 @@
 ---
 title: "Group 62 Stats 20 Project"
-author: "Will Prawira 006709270, Prisha Chowdhury 806755809, Nhi Pham 906749931"
+author: " Prisha Chowdhury 806755809"
 date: "2025-11-25"
 output: html_document
 ---
