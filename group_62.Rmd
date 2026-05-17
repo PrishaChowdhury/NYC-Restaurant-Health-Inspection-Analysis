@@ -1,0 +1,542 @@
+---
+title: "Group 62 Stats 20 Project"
+author: "Will Prawira 006709270, Prisha Chowdhury 806755809, Nhi Pham 906749931"
+date: "2025-11-25"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # I used AI to help familiarize myself with dplyr and its tools
+library(scales)
+```
+
+# CORRELATION BETWEEN VIOLATION AND GRADE 
+
+```{r}
+# -----------------------------
+# SUMMARY OF THE DATASET
+# -----------------------------
+df <- read.csv("newyork_restaurant_inspections.csv")
+head(df)
+str(df)
+nrow(df)
+ncol(df)
+```
+Hypothesis 1:
+Worse grades are associated with higher number of violations (Correlation between grade and number of violations)
+
+False Negative: 
+Some A-graded restaurants have violations(especially critical ones)
+
+```{r}
+# -----------------------------
+# KEEP ONLY NEEDED COLUMNS
+# -----------------------------
+# CAMIS                 -> Restaurant ID
+# DBA                   -> Restaurant name
+# INSPECTION.DATE       -> Date of inspection
+# VIOLATION.CODE        -> Type of violation
+# VIOLATION.DESCRIPTION -> Description of violation
+# CRITICAL.FLAG         -> Whether violation was critical
+# SCORE                 -> Numerical inspection score
+# GRADE                 -> Assigned letter grade (A, B, C)
+# ACTION                -> Action taken (e.g., closed, fined, etc.)
+
+df_needed <- df[, c("CAMIS",
+                   "DBA",
+                   "INSPECTION.DATE",
+                   "VIOLATION.CODE",
+                   "VIOLATION.DESCRIPTION",
+                   "CRITICAL.FLAG",
+                   "SCORE",
+                   "GRADE",
+                   "ACTION")]
+```
+
+```{r}
+# -----------------------------
+# CLEAN DATA
+# -----------------------------
+
+# -------- CAMIS ---------
+#Remove rows with missing ID
+df_needed <- df_needed[!is.na(df_needed$CAMIS), ]
+
+# -------- INSEPCTION.DATE ---------
+#Convert to Date type and remove missing dates
+df_needed$INSPECTION.DATE <- as.Date(df_needed$INSPECTION.DATE,
+                                    format = "%m/%d/%Y")
+#Check for missing values
+sum(is.na(df_needed$INSPECTION.DATE))
+
+# -------- VIOLATION.CODE ---------
+#Check for missing values
+sum(is.na(df_needed$VIOLATION.CODE))
+
+# -------- CRITICAL.FLAG ---------
+df_needed$CRITICAL.FLAG <- trimws(df_needed$CRITICAL.FLAG)   #remove spaces 
+df_needed$CRITICAL.FLAG[df_needed$CRITICAL.FLAG == ""] <- NA  
+df_needed$CRITICAL.FLAG <- toupper(df_needed$CRITICAL.FLAG)  #make everything uppercase for comparison
+
+table(df_needed$CRITICAL.FLAG, useNA = "ifany")
+
+# -------- GRADE ---------
+#Remove row with missing Grade
+df_needed <- df_needed[df_needed$GRADE != "", ]
+table(df_needed$GRADE, useNA = "ifany")
+```
+
+```{r}
+# -----------------------------
+# DATA ANALYSIS
+# -----------------------------
+
+#Create a data frame to count number of violations
+df_needed$INSPECTION_ID <- paste(df_needed$CAMIS,
+                                 df_needed$INSPECTION.DATE,
+                                 df_needed$GRADE,
+                                 df_needed$SCORE,
+                                 sep = "_")
+
+inspection_df <- df_needed %>%
+  group_by(INSPECTION_ID, CAMIS, INSPECTION.DATE, GRADE, SCORE) %>%
+  summarize(
+    num_violations = sum(!is.na(VIOLATION.CODE)),           
+    num_critical   = sum(CRITICAL.FLAG == "CRITICAL", na.rm = TRUE)  # count critical violations
+  ) %>%
+  
+  ungroup()
+```
+
+```{r}
+# Calculate average number of violations per grade (Only A, B, C)
+inspection_df <- inspection_df %>%
+  filter(GRADE %in% c("A", "B", "C"))
+
+inspection_df %>%
+  group_by(GRADE) %>%
+  summarize(
+    mean_violations = mean(num_violations),
+    n = n()
+  )
+
+# I used AI here to find out which hypothesis test is the best and how to use the function
+# Correlation Test
+inspection_df <- inspection_df %>%
+  filter(GRADE %in% c("A", "B", "C")) %>%   
+  mutate(
+    grade_num = case_when(
+      GRADE == "A" ~ 1,
+      GRADE == "B" ~ 2,
+      GRADE == "C" ~ 3,
+      TRUE ~ NA_real_
+    )
+  )
+
+cor.test(inspection_df$grade_num, inspection_df$num_violations)   #AI
+```
+Correlation coefficient: r = 0.6677886 
+There is a moderately strong positive linear relationship between Grade and Number of Violations.
+As grade worsens (A->B->C :: 1->2->3), the number of violation increases
+
+p-value < 2.2e-16 which is extremely small. 
+Null Hypothesis is rejected. (No linear relationship between Grade and Number of violations)
+
+95% confidence interval: [0.6629520 0.6725695]
+The true correlation in the population is between 0.663 and 0.73 (far from 0).
+The relationship is strong and real
+
+The data strongly supports H1: Worse grades are associated with higher number of violations
+
+```{r}
+# -----------------------------
+# PLOT
+# -----------------------------
+# ggplot 2
+inspection_df %>%
+  filter(GRADE %in% c("A", "B", "C")) %>%
+  ggplot(aes(x = GRADE, y = num_violations, fill = GRADE)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("skyblue", "gold", "salmon")) +
+  labs(
+    title = "Number of Violations by Grade",
+    x = "Grade",
+    y = "Number of Violations"
+  ) +
+  theme_minimal()
+ggsave("num_violation_by_grade.png", width = 8, height = 6, dpi = 300)
+
+# Scatter plot to see the trend
+plot(inspection_df$grade_num, inspection_df$num_violations,
+     xlab = "Grade (A=1, B=2, C=3)",
+     ylab = "Number of Violations",
+     main = "Correlation Between Grade and Violations")
+
+abline(lm(num_violations ~ grade_num, data = inspection_df), col="red")
+
+ggsave("scatter_corr_grade_violation.png", width=8, height=6, dpi=300)
+
+```
+
+```{r}
+# -----------------------------
+# FALSE NEGATIVES ANALYSIS
+# -----------------------------
+# Total number of A-grade inspections
+total_A <- sum(inspection_df$GRADE == "A")
+
+# A-graded inspections with ANY violations
+A_any <- sum(inspection_df$GRADE == "A" & inspection_df$num_violations > 0)
+
+# A-graded inspections with CRITICAL violations
+A_crit <- sum(inspection_df$GRADE == "A" & inspection_df$num_critical > 0)
+
+# Proportions
+prop_any  <- A_any  / total_A
+prop_crit <- A_crit / total_A
+
+total_A
+A_any
+A_crit
+prop_any
+prop_crit
+```
+All inspections on A-graded restaurants had at least one documented violations.
+81.36% of these inspections had at least one critical violation, meaning a violation that poses a direct risk to public health (e.g., improper food temperatures, evidence of rodents, or contamination hazards).
+
+A grade suggests high food safety, yet the inspection documents violations, including critical ones. 
+Consequently, an A grade does not guarantee the absence of health hazards; rather, it only reflects that the total violation score remained below the numerical threshold for a B or C grade.
+
+# PERSISTENCE AND RECIDIVISM
+
+## **Loading and Cleaning**
+
+```{r}
+restaurant <- read.csv("newyork_restaurant_inspections.csv")
+
+# Remove columns: Latitude, Longitude, Community.Board. Council.District, Census.Tract, BIN, BBL, NTA, Location, BUILDING, STREET, ZIPCODE, PHONE, RECORD.DATE
+restaurant <- restaurant[ , !(names(restaurant) %in% c("Latitude", "Longitude", "Community.Board", "Council.District", "Census.Tract", "BIN", "BBL", "NTA", "Location", "BUILDING", "STREET", "ZIPCODE", "PHONE","RECORD.DATE"))]
+
+# Date formatting and filter all rows so that all inspections happened after 1996
+restaurant$INSPECTION.DATE <- as.Date(restaurant$INSPECTION.DATE, format = "%m/%d/%Y")
+restaurant <- restaurant %>% filter(INSPECTION.DATE >= as.Date("1996-01-01"))
+
+# Remove all NAs for score
+restaurant <- restaurant %>% filter(!is.na(SCORE))
+```
+
+```{r}
+# We filter inspections by date. If different scores in the same inspection date, we will take the highest as the score
+restaurant_unique <- restaurant %>%
+  group_by(CAMIS, DBA, INSPECTION.DATE) %>%
+  summarise(
+    SCORE = max(SCORE),
+    CRITICAL_VIOLATIONS = sum(CRITICAL.FLAG == "Critical", na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Assign letter grade for each inspection
+    GRADE = case_when(
+      SCORE <= 13 ~ "A",
+      SCORE <= 27 ~ "B",
+      TRUE ~ "C"
+    )
+  ) %>%
+  arrange(CAMIS, INSPECTION.DATE)
+
+head(restaurant_unique)
+```
+##  **Analyzing the Data**
+
+```{r}
+# For each restaurant, compare current vs previous inspection
+restaurant_persistence <- restaurant_unique %>%
+  group_by(CAMIS) %>%
+  arrange(INSPECTION.DATE) %>%
+  mutate(
+    score_prev = lag(SCORE),   # Previous inspection score
+    score_change = SCORE - score_prev, 
+    critical_prev = lag(CRITICAL_VIOLATIONS),
+    
+    # Indicates if critical violation is recurring
+    critical_recur = ifelse(CRITICAL_VIOLATIONS > 0 & critical_prev > 0, 1, 0)
+  ) %>%
+  filter(!is.na(score_prev)) %>% #Remove first inspections
+  ungroup()
+
+head(restaurant_persistence)
+```
+
+
+```{r}
+# Categorizes each inspection pair on whether the restaurant 'Improved', 'Worsened', or 'No Change' based on change in score 
+score_summary <- restaurant_persistence %>%
+  mutate(
+    score_trend = case_when(
+    score_change < 0 ~ "Improved",
+    score_change > 0 ~ "Worsened",
+    TRUE ~ "No Change"
+    )
+  ) %>%
+  count(score_trend) %>%
+  mutate(prop = n / sum(n)) # Proportion of each category
+
+print(score_summary)
+```
+
+```{r}
+## Computing proportions and count for recurrence of critical violations
+critical_summary <- restaurant_persistence %>%
+  summarise(
+    total_pairs = n(),
+    critical_recur_count = sum(critical_recur),
+    prop_critical_recur = critical_recur_count / total_pairs
+  )
+
+print(critical_summary)
+```
+## Data Visualizations
+
+```{r}
+# Plot Score Trends (Improved / No Change / Worsened)
+ggplot(score_summary, aes(x=score_trend, y=prop, fill=score_trend)) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Improvement vs. Decline Across The Boroughs",
+       x = "Score Trend (Compared to Previous Inspection)",
+       y = "Proportion of Inspections") +
+  theme_minimal()
+
+ggsave("score_trend_barplot.png", width = 6, height = 4, dpi = 300)
+```
+
+```{r}
+restaurant_yearly <- restaurant_persistence %>%
+  mutate(year = format(INSPECTION.DATE, "%Y")) %>%
+  group_by(year) %>%
+  filter(year != "2015") %>%
+  summarise(
+    total_pairs = n(),
+    critical_recur_count = sum(critical_recur),
+    prop_critical_recur = critical_recur_count / total_pairs
+  )
+
+
+# Yearly Inspeciton Counts + Recurrence Rate on Log Scale
+ggplot(restaurant_yearly, aes(x=year)) +
+  geom_bar(
+    aes(y=total_pairs), 
+    stat="identity", 
+    fill="lightblue", 
+    alpha=0.7
+  ) +
+  geom_line(
+    aes(y=prop_critical_recur * 1000, color="Recurrence Proportion", group=1),
+    size=1.2
+  ) +
+  geom_point(
+    aes(y=prop_critical_recur * 1000, color="Recurrence Proportion"), 
+    size=2
+  ) +
+  scale_y_continuous(
+    name="Number of Inspection Pairs",
+    trans="log10",
+    sec.axis = sec_axis(
+      ~ . / 1000, 
+      labels=scales::percent_format(), 
+      name="Recurrence Proportion")
+  ) +
+  scale_color_manual(values= c("Recurrence Proportion"="darkred")) +
+  labs(
+    title="Log-Scaled Inspections Over Time", 
+    x="Year", 
+    color="Metric") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  )
+
+ggsave("yearly_recidivism_plot.png", width =8, height=5, dpi = 300)
+```
+```{r}
+# McNemar's Test for Recurrence of Critical Violations (AI-SUGGESTED IDEA)
+
+# Contingency Table:
+# Did a restaurant have critical violations previously vs currently?
+tab <- table(
+  prev = restaurant_persistence$critical_prev > 0,
+  curr = restaurant_persistence$CRITICAL_VIOLATIONS >0
+)
+
+mcnemar.test(tab)
+```
+The McNemar's test gave a chi-squared statistic of 152.57 with 1 degree of freedom, as well as a p-value < 2.2e^(-16), which is far below any conventional significance level. These results indicate that restaurants with prior critical violations are significantly more likely to have violations in subsequent inspections, suggesting persistence rather than random occurrence.
+
+## **Visualizing McNemar Contingency Table**
+
+```{r}
+#Converting the dataframe into a heatmap
+mcnemar_df <- restaurant_persistence %>%
+  mutate(
+    prev = ifelse(critical_prev > 0, "Previous: Critical", "Previous: None"),
+    curr = ifelse(CRITICAL_VIOLATIONS > 0, "Current: Critical", "Current: None")
+  ) %>%
+  count(prev, curr)
+
+ggplot(mcnemar_df, aes(x = prev, y = curr, fill = n)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n), size = 6, color = "black") +
+  scale_fill_gradient(low = "#e0ecf4", high = "#0868ac") +
+  labs(
+    title = "Recurrence of Critical Violations",
+    x = "",
+    y = "",
+    fill = "Count",
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(size=12),
+    axis.text.y = element_text(size=12)
+  )
+
+ggsave("critical_violation_heatmap.png", width=6, height=5, dpi=300)
+```
+
+# HIGH-RISK CUISINES AND BOROUGHS
+
+```{r}
+restaurant <- read.csv("newyork_restaurant_inspections.csv")
+head(restaurant)
+```
+
+#cleaning for EDA 
+```{r}
+restaurant <-  restaurant[, c("CAMIS","BORO", "CUISINE.DESCRIPTION", "INSPECTION.DATE", "SCORE","VIOLATION.CODE","VIOLATION.DESCRIPTION","GRADE")]
+restaurant$INSPECTION.DATE <- as.Date(restaurant$INSPECTION.DATE, format = "%m/%d/%Y")
+restaurant$YEAR <- as.numeric(format(restaurant$INSPECTION.DATE, format = "%Y"))
+restaurant <- restaurant[!is.na(restaurant$SCORE), ]
+restaurant <- restaurant[restaurant$BORO != "" & restaurant$BORO != "0", ]
+restaurant$CUISINE.DESCRIPTION <-
+toupper(restaurant$CUISINE.DESCRIPTION) 
+restaurant <- restaurant[restaurant$SCORE <= 60, ]
+head(restaurant)
+```
+#Summaries 
+
+##Most common cuisines
+```{r}
+cuisine_count <- sort(table(restaurant$CUISINE.DESCRIPTION), decreasing = TRUE)
+top10_cuisine <-head(cuisine_count, 10)
+```
+American cuisine has the most occurence 
+
+##Most inspected Boroughs 
+```{r}
+sort(table(restaurant$BORO), decreasing = TRUE)
+```
+Manhattan has the most occurance 
+##Score Statistic 
+```{r}
+summary(restaurant$SCORE)
+```
+
+# Visualization 
+```{r}
+library(ggplot2)
+```
+
+## 1. Top 10 Most Common Cuisines
+```{r}
+barplot(top10_cuisine, main = "Top 10 Cuisine Types by Frequency", ylab = "Number of Inspections", color = "lightblue") 
+```
+
+## 2. Average Inspection Score by Borough
+```{r}
+avg_boro <- aggregate(SCORE ~ BORO, data = restaurant, FUN = mean)
+
+ggplot(avg_boro, aes(x = reorder(BORO, SCORE), y = SCORE)) +
+  geom_col(fill = "lightgreen") +
+  labs(title = "Average Inspection Score by Borough", x = "Borough", y = "Average Score") +
+  theme_minimal()
+
+ggsave("avg_score_by_borough.png", width=8, height=6, dpi=300)
+
+```
+
+##3.Cuisines With the Highest Average Scores (Worst Overall Food Safety Performance)
+
+```{r}
+avg_cuisine <- aggregate(SCORE ~ CUISINE.DESCRIPTION, data = restaurant, mean)
+
+worst10 <- avg_cuisine[order(avg_cuisine$SCORE, decreasing = TRUE),][1:10, ]
+
+ggplot(worst10, aes(x = reorder(CUISINE.DESCRIPTION, SCORE), y = SCORE)) + 
+geom_col(fill = "steelblue") + 
+coord_flip() + 
+labs(title = "Top 10 Highest-Risk Cuisines (Average Score)",
+x = "Cuisine",
+y = "Average Score") +
+theme_minimal()
+
+ggsave("high_risk_cuisines_avg.png", width=8, height=6, dpi=300)
+```
+
+##Top 10 Violation Codes
+```{r}
+viol_counts <- sort(table(restaurant$VIOLATION.CODE), decreasing = TRUE)
+top10_viol <- head(viol_counts, 10)
+top10_viol_df <- data.frame( ViolationCode = names(top10_viol), Count= as.numeric(top10_viol), stringsAsFactors = FALSE)
+
+ggplot(top10_viol_df, aes(x = reorder(ViolationCode, Count), y = Count)) +
+  geom_col(fill = "tomato") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Most Frequent Violation Codes",
+    x = "Violation Code",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+ggsave("frequent_violation_codes.png", width=8, height=6, dpi=300)
+```
+10F: Non-food contact surface or equipment made of unacceptable material, not kept clean, or not properly sealed, raised, spaced or movable to allow accessibility for cleaning on all sides, above and underneath the unit.
+This is the most common violationn
+## prediction 
+```{r}
+# Create BAD_GRADE variable: 1 = B/C, 0 = A
+restaurant$BAD_GRADE <- ifelse(restaurant$GRADE %in% c("B", "C"), 1, 0)
+
+# Keep relevant columns
+ml_data <- restaurant[, c("BAD_GRADE", "SCORE")]
+
+# Remove missing values
+ml_data <- na.omit(ml_data)
+
+# Fit simple logistic regression
+model <- glm(BAD_GRADE ~ SCORE,
+             data = ml_data,
+             family = binomial)
+
+summary(model)
+
+```
+The logistic regression shows that as inspection scores increase (indicating more violations), the probability of receiving a bad grade (B or C) increases significantly.
+
+```{r}
+plot(ml_data$SCORE, fitted(model),
+     pch = 16, col = "#00000022",
+     main = "Predicted Probability of Bad Grade vs. Score",
+     xlab = "Inspection Score",
+     ylab = "Predicted Probability")
+
+```
+**Observation** the logistic curve confirms a strong positive relationship between bad grades and violations: As inspection scores increase, the likelihood of receiving a bad grade increases sharply.
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
